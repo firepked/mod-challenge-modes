@@ -813,7 +813,7 @@ public:
         return new gobject_challenge_modesAI(object);
     }
 
-    bool OnGossipHello(Player* player, GameObject* /*go*/) override
+    bool OnGossipHello(Player* player, GameObject* go) override
     {
         ChatHandler handler(player->GetSession());
 
@@ -891,11 +891,28 @@ public:
 
     bool OnGossipSelect(Player* player, GameObject* /*go*/, uint32 /*sender*/, uint32 action) override
     {
+        // Validate action is a known challenge mode
+        ChallengeModeSettings mode = static_cast<ChallengeModeSettings>(action);
+        auto const& allModes = ChallengeModes::GetAllModeInfos();
+        bool valid = false;
+        for (auto const& m : allModes)
+        {
+            if (m.id == mode)
+            {
+                valid = true;
+                break;
+            }
+        }
+        if (!valid || !sChallengeModes->challengeEnabled(mode))
+        {
+            return false;
+        }
+
         player->UpdatePlayerSetting("mod-challenge-modes", action, 1);
 
         ChatHandler handler(player->GetSession());
-        handler.PSendSysMessage("|cff00ffChallenage mode '%s' has been activated! Good luck!|r",
-            ChallengeModes::GetModeName(static_cast<ChallengeModeSettings>(action)).c_str());
+        handler.PSendSysMessage("|cff00ff00Challenge mode '%s' has been activated! Good luck!|r",
+            ChallengeModes::GetModeName(mode).c_str());
 
         CloseGossipMenuFor(player);
         return true;
