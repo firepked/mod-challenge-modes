@@ -1,14 +1,62 @@
-﻿/*
- * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license: https://github.com/azerothcore/azerothcore-wotlk/blob/master/LICENSE-AGPL3
+/*
+ * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license
  */
 
 #include "ChallengeModes.h"
+
+// ============================================================================
+// Mode info helpers
+// ============================================================================
+
+std::vector<ChallengeModeInfo> ChallengeModes::GetAllModeInfos()
+{
+    return {
+        { SETTING_HARDCORE,           "Hardcore",           "You only have one life. Upon death you become a ghost permanently and can never be revived." },
+        { SETTING_SEMI_HARDCORE,      "Semi-Hardcore",      "Upon death you lose all worn equipment and carried gold." },
+        { SETTING_SELF_CRAFTED,       "Self-Crafted",       "You can only equip items you have crafted yourself." },
+        { SETTING_ITEM_QUALITY_LEVEL, "Low-Quality Gear",   "You can only equip items of Normal or Poor quality." },
+        { SETTING_SLOW_XP_GAIN,       "Slow XP",            "Experience gain is reduced to 50%." },
+        { SETTING_VERY_SLOW_XP_GAIN,  "Very Slow XP",       "Experience gain is reduced to 25%. Includes Slow XP rewards." },
+        { SETTING_QUEST_XP_ONLY,      "Quest XP Only",      "Experience can only be gained from quests." },
+        { SETTING_IRON_MAN,           "Iron Man",           "Enforces the Iron Man challenge ruleset (no trading, no grouping, no enchants, etc.)." }
+    };
+}
+
+std::string ChallengeModes::GetModeName(ChallengeModeSettings id)
+{
+    auto const& infos = GetAllModeInfos();
+    for (auto const& info : infos)
+    {
+        if (info.id == id)
+            return info.name;
+    }
+    return "Unknown";
+}
+
+std::string ChallengeModes::GetModeDescription(ChallengeModeSettings id)
+{
+    auto const& infos = GetAllModeInfos();
+    for (auto const& info : infos)
+    {
+        if (info.id == id)
+            return info.description;
+    }
+    return "";
+}
+
+// ============================================================================
+// Singleton
+// ============================================================================
 
 ChallengeModes* ChallengeModes::instance()
 {
     static ChallengeModes instance;
     return &instance;
 }
+
+// ============================================================================
+// Config helpers
+// ============================================================================
 
 bool ChallengeModes::challengeEnabledForPlayer(ChallengeModeSettings setting, Player* player) const
 {
@@ -94,10 +142,14 @@ float ChallengeModes::getXpBonusForChallenge(ChallengeModeSettings setting) cons
         case HARDCORE_DEAD:
             break;
     }
-    return 1;
+    return 1.0f;
 }
 
-const std::unordered_map<uint8, uint32> *ChallengeModes::getTitleMapForChallenge(ChallengeModeSettings setting) const
+// ============================================================================
+// Reward map getters
+// ============================================================================
+
+const std::unordered_map<uint8, uint32>* ChallengeModes::getTitleMapForChallenge(ChallengeModeSettings setting) const
 {
     switch (setting)
     {
@@ -123,7 +175,7 @@ const std::unordered_map<uint8, uint32> *ChallengeModes::getTitleMapForChallenge
     return {};
 }
 
-const std::unordered_map<uint8, uint32> *ChallengeModes::getTalentMapForChallenge(ChallengeModeSettings setting) const
+const std::unordered_map<uint8, uint32>* ChallengeModes::getTalentMapForChallenge(ChallengeModeSettings setting) const
 {
     switch (setting)
     {
@@ -149,7 +201,7 @@ const std::unordered_map<uint8, uint32> *ChallengeModes::getTalentMapForChalleng
     return {};
 }
 
-const std::unordered_map<uint8, uint32> *ChallengeModes::getItemMapForChallenge(ChallengeModeSettings setting) const
+const std::unordered_map<uint8, uint32>* ChallengeModes::getItemMapForChallenge(ChallengeModeSettings setting) const
 {
     switch (setting)
     {
@@ -201,7 +253,7 @@ uint32 ChallengeModes::getItemRewardAmount(ChallengeModeSettings setting) const
     return 0;
 }
 
-const std::unordered_map<uint8, uint32> *ChallengeModes::getAchievementMapForChallenge(ChallengeModeSettings setting) const
+const std::unordered_map<uint8, uint32>* ChallengeModes::getAchievementMapForChallenge(ChallengeModeSettings setting) const
 {
     switch (setting)
     {
@@ -227,6 +279,10 @@ const std::unordered_map<uint8, uint32> *ChallengeModes::getAchievementMapForCha
     return {};
 }
 
+// ============================================================================
+// World script — loads config
+// ============================================================================
+
 class ChallengeModes_WorldScript : public WorldScript
 {
 public:
@@ -240,20 +296,19 @@ public:
     }
 
 private:
-    static void LoadStringToMap(std::unordered_map<uint8, uint32> &mapToLoad, const std::string &configString)
+    static void LoadStringToMap(std::unordered_map<uint8, uint32>& mapToLoad, const std::string& configString)
     {
         std::string delimitedValue;
         std::stringstream configIdStream;
-
         configIdStream.str(configString);
-        // Process each config ID in the string, delimited by the comma - "," and then space " "
+
         while (std::getline(configIdStream, delimitedValue, ','))
         {
             std::string pairOne, pairTwo;
             std::stringstream configPairStream(delimitedValue);
-            configPairStream>>pairOne>>pairTwo;
-            auto configLevel = atoi(pairOne.c_str());
-            auto rewardValue = atoi(pairTwo.c_str());
+            configPairStream >> pairOne >> pairTwo;
+            uint8 configLevel = static_cast<uint8>(atoi(pairOne.c_str()));
+            uint32 rewardValue = static_cast<uint32>(atoi(pairTwo.c_str()));
             mapToLoad[configLevel] = rewardValue;
         }
     }
@@ -261,146 +316,163 @@ private:
     static void LoadConfig()
     {
         sChallengeModes->challengesEnabled = sConfigMgr->GetOption<bool>("ChallengeModes.Enable", false);
-        if (sChallengeModes->enabled())
+        if (!sChallengeModes->enabled())
         {
-            for (auto& [confName, rewardMap] : sChallengeModes->rewardConfigMap)
-            {
-                rewardMap->clear();
-                LoadStringToMap(*rewardMap, sConfigMgr->GetOption<std::string>(confName, ""));
-            }
-
-            sChallengeModes->hardcoreEnable          = sConfigMgr->GetOption<bool>("Hardcore.Enable", true);
-            sChallengeModes->semiHardcoreEnable      = sConfigMgr->GetOption<bool>("SemiHardcore.Enable", true);
-            sChallengeModes->selfCraftedEnable       = sConfigMgr->GetOption<bool>("SelfCrafted.Enable", true);
-            sChallengeModes->itemQualityLevelEnable  = sConfigMgr->GetOption<bool>("ItemQualityLevel.Enable", true);
-            sChallengeModes->slowXpGainEnable        = sConfigMgr->GetOption<bool>("SlowXpGain.Enable", true);
-            sChallengeModes->verySlowXpGainEnable    = sConfigMgr->GetOption<bool>("VerySlowXpGain.Enable", true);
-            sChallengeModes->questXpOnlyEnable       = sConfigMgr->GetOption<bool>("QuestXpOnly.Enable", true);
-            sChallengeModes->ironManEnable           = sConfigMgr->GetOption<bool>("IronMan.Enable", true);
-
-            sChallengeModes->hardcoreDisableLevel          = sConfigMgr->GetOption<uint32>("Hardcore.DisableLevel", 0);
-            sChallengeModes->semiHardcoreDisableLevel      = sConfigMgr->GetOption<uint32>("SemiHardcore.DisableLevel", 0);
-            sChallengeModes->selfCraftedDisableLevel       = sConfigMgr->GetOption<uint32>("SelfCrafted.DisableLevel", 0);
-            sChallengeModes->itemQualityLevelDisableLevel  = sConfigMgr->GetOption<uint32>("ItemQualityLevel.DisableLevel", 0);
-            sChallengeModes->slowXpGainDisableLevel        = sConfigMgr->GetOption<uint32>("SlowXpGain.DisableLevel", 0);
-            sChallengeModes->verySlowXpGainDisableLevel    = sConfigMgr->GetOption<uint32>("VerySlowXpGain.DisableLevel", 0);
-            sChallengeModes->questXpOnlyDisableLevel       = sConfigMgr->GetOption<uint32>("QuestXpOnly.DisableLevel", 0);
-            sChallengeModes->ironManDisableLevel           = sConfigMgr->GetOption<uint32>("IronMan.DisableLevel", 0);
-
-            sChallengeModes->hardcoreXpBonus         = sConfigMgr->GetOption<float>("Hardcore.XPMultiplier", 1.0f);
-            sChallengeModes->semiHardcoreXpBonus     = sConfigMgr->GetOption<float>("SemiHardcore.XPMultiplier", 1.0f);
-            sChallengeModes->selfCraftedXpBonus      = sConfigMgr->GetOption<float>("SelfCrafted.XPMultiplier", 1.0f);
-            sChallengeModes->itemQualityLevelXpBonus = sConfigMgr->GetOption<float>("ItemQualityLevel.XPMultiplier", 1.0f);
-            sChallengeModes->questXpOnlyXpBonus      = sConfigMgr->GetOption<float>("QuestXpOnly.XPMultiplier", 1.0f);
-            sChallengeModes->slowXpGainBonus         = sConfigMgr->GetOption<float>("SlowXpGain.XPMultiplier", 0.50f);
-            sChallengeModes->verySlowXpGainBonus     = sConfigMgr->GetOption<float>("VerySlowXpGain.XPMultiplier", 0.25f);
-            sChallengeModes->ironManXpBonus          = sConfigMgr->GetOption<float>("IronMan.XPMultiplier", 1.0f);
-
-            sChallengeModes->hardcoreItemRewardAmount         = sConfigMgr->GetOption<uint32>("Hardcore.ItemRewardAmount", 1);
-            sChallengeModes->semiHardcoreItemRewardAmount     = sConfigMgr->GetOption<uint32>("SemiHardcore.ItemRewardAmount", 1);
-            sChallengeModes->selfCraftedItemRewardAmount      = sConfigMgr->GetOption<uint32>("SelfCrafted.ItemRewardAmount", 1);
-            sChallengeModes->itemQualityLevelItemRewardAmount = sConfigMgr->GetOption<uint32>("ItemQualityLevel.ItemRewardAmount", 1);
-            sChallengeModes->slowXpGainItemRewardAmount       = sConfigMgr->GetOption<uint32>("SlowXpGain.ItemRewardAmount", 1);
-            sChallengeModes->verySlowXpGainItemRewardAmount   = sConfigMgr->GetOption<uint32>("VerySlowXpGain.ItemRewardAmount", 1);
-            sChallengeModes->questXpOnlyItemRewardAmount      = sConfigMgr->GetOption<uint32>("QuestXpOnly.ItemRewardAmount", 1);
-            sChallengeModes->ironManItemRewardAmount          = sConfigMgr->GetOption<uint32>("IronMan.ItemRewardAmount", 1);
-
-            LoadStringToMap(sChallengeModes->hardcoreAchievementReward, sConfigMgr->GetOption<std::string>("Hardcore.AchievementReward", ""));
-            LoadStringToMap(sChallengeModes->semiHardcoreAchievementReward, sConfigMgr->GetOption<std::string>("SemiHardcore.AchievementReward", ""));
-            LoadStringToMap(sChallengeModes->selfCraftedAchievementReward, sConfigMgr->GetOption<std::string>("SelfCrafted.AchievementReward", ""));
-            LoadStringToMap(sChallengeModes->itemQualityLevelAchievementReward, sConfigMgr->GetOption<std::string>("ItemQualityLevel.AchievementReward", ""));
-            LoadStringToMap(sChallengeModes->slowXpGainAchievementReward, sConfigMgr->GetOption<std::string>("SlowXpGain.AchievementReward", ""));
-            LoadStringToMap(sChallengeModes->verySlowXpGainAchievementReward, sConfigMgr->GetOption<std::string>("VerySlowXpGain.AchievementReward", ""));
-            LoadStringToMap(sChallengeModes->questXpOnlyAchievementReward, sConfigMgr->GetOption<std::string>("QuestXpOnly.AchievementReward", ""));
-            LoadStringToMap(sChallengeModes->ironManAchievementReward, sConfigMgr->GetOption<std::string>("IronMan.AchievementReward", ""));
+            return;
         }
+
+        for (auto& [confName, rewardMap] : sChallengeModes->rewardConfigMap)
+        {
+            rewardMap->clear();
+            LoadStringToMap(*rewardMap, sConfigMgr->GetOption<std::string>(confName, ""));
+        }
+
+        sChallengeModes->hardcoreEnable          = sConfigMgr->GetOption<bool>("Hardcore.Enable", true);
+        sChallengeModes->semiHardcoreEnable      = sConfigMgr->GetOption<bool>("SemiHardcore.Enable", true);
+        sChallengeModes->selfCraftedEnable       = sConfigMgr->GetOption<bool>("SelfCrafted.Enable", true);
+        sChallengeModes->itemQualityLevelEnable  = sConfigMgr->GetOption<bool>("ItemQualityLevel.Enable", true);
+        sChallengeModes->slowXpGainEnable        = sConfigMgr->GetOption<bool>("SlowXpGain.Enable", true);
+        sChallengeModes->verySlowXpGainEnable    = sConfigMgr->GetOption<bool>("VerySlowXpGain.Enable", true);
+        sChallengeModes->questXpOnlyEnable       = sConfigMgr->GetOption<bool>("QuestXpOnly.Enable", true);
+        sChallengeModes->ironManEnable           = sConfigMgr->GetOption<bool>("IronMan.Enable", true);
+
+        sChallengeModes->hardcoreDisableLevel          = sConfigMgr->GetOption<uint32>("Hardcore.DisableLevel", 0);
+        sChallengeModes->semiHardcoreDisableLevel      = sConfigMgr->GetOption<uint32>("SemiHardcore.DisableLevel", 0);
+        sChallengeModes->selfCraftedDisableLevel       = sConfigMgr->GetOption<uint32>("SelfCrafted.DisableLevel", 0);
+        sChallengeModes->itemQualityLevelDisableLevel  = sConfigMgr->GetOption<uint32>("ItemQualityLevel.DisableLevel", 0);
+        sChallengeModes->slowXpGainDisableLevel        = sConfigMgr->GetOption<uint32>("SlowXpGain.DisableLevel", 0);
+        sChallengeModes->verySlowXpGainDisableLevel    = sConfigMgr->GetOption<uint32>("VerySlowXpGain.DisableLevel", 0);
+        sChallengeModes->questXpOnlyDisableLevel       = sConfigMgr->GetOption<uint32>("QuestXpOnly.DisableLevel", 0);
+        sChallengeModes->ironManDisableLevel           = sConfigMgr->GetOption<uint32>("IronMan.DisableLevel", 0);
+
+        sChallengeModes->hardcoreXpBonus         = sConfigMgr->GetOption<float>("Hardcore.XPMultiplier", 1.0f);
+        sChallengeModes->semiHardcoreXpBonus     = sConfigMgr->GetOption<float>("SemiHardcore.XPMultiplier", 1.0f);
+        sChallengeModes->selfCraftedXpBonus      = sConfigMgr->GetOption<float>("SelfCrafted.XPMultiplier", 1.0f);
+        sChallengeModes->itemQualityLevelXpBonus = sConfigMgr->GetOption<float>("ItemQualityLevel.XPMultiplier", 1.0f);
+        sChallengeModes->questXpOnlyXpBonus      = sConfigMgr->GetOption<float>("QuestXpOnly.XPMultiplier", 1.0f);
+        sChallengeModes->slowXpGainBonus         = sConfigMgr->GetOption<float>("SlowXpGain.XPMultiplier", 0.50f);
+        sChallengeModes->verySlowXpGainBonus     = sConfigMgr->GetOption<float>("VerySlowXpGain.XPMultiplier", 0.25f);
+        sChallengeModes->ironManXpBonus          = sConfigMgr->GetOption<float>("IronMan.XPMultiplier", 1.0f);
+
+        sChallengeModes->hardcoreItemRewardAmount         = sConfigMgr->GetOption<uint32>("Hardcore.ItemRewardAmount", 1);
+        sChallengeModes->semiHardcoreItemRewardAmount     = sConfigMgr->GetOption<uint32>("SemiHardcore.ItemRewardAmount", 1);
+        sChallengeModes->selfCraftedItemRewardAmount      = sConfigMgr->GetOption<uint32>("SelfCrafted.ItemRewardAmount", 1);
+        sChallengeModes->itemQualityLevelItemRewardAmount = sConfigMgr->GetOption<uint32>("ItemQualityLevel.ItemRewardAmount", 1);
+        sChallengeModes->slowXpGainItemRewardAmount       = sConfigMgr->GetOption<uint32>("SlowXpGain.ItemRewardAmount", 1);
+        sChallengeModes->verySlowXpGainItemRewardAmount   = sConfigMgr->GetOption<uint32>("VerySlowXpGain.ItemRewardAmount", 1);
+        sChallengeModes->questXpOnlyItemRewardAmount      = sConfigMgr->GetOption<uint32>("QuestXpOnly.ItemRewardAmount", 1);
+        sChallengeModes->ironManItemRewardAmount          = sConfigMgr->GetOption<uint32>("IronMan.ItemRewardAmount", 1);
+
+        LoadStringToMap(sChallengeModes->hardcoreAchievementReward, sConfigMgr->GetOption<std::string>("Hardcore.AchievementReward", ""));
+        LoadStringToMap(sChallengeModes->semiHardcoreAchievementReward, sConfigMgr->GetOption<std::string>("SemiHardcore.AchievementReward", ""));
+        LoadStringToMap(sChallengeModes->selfCraftedAchievementReward, sConfigMgr->GetOption<std::string>("SelfCrafted.AchievementReward", ""));
+        LoadStringToMap(sChallengeModes->itemQualityLevelAchievementReward, sConfigMgr->GetOption<std::string>("ItemQualityLevel.AchievementReward", ""));
+        LoadStringToMap(sChallengeModes->slowXpGainAchievementReward, sConfigMgr->GetOption<std::string>("SlowXpGain.AchievementReward", ""));
+        LoadStringToMap(sChallengeModes->verySlowXpGainAchievementReward, sConfigMgr->GetOption<std::string>("VerySlowXpGain.AchievementReward", ""));
+        LoadStringToMap(sChallengeModes->questXpOnlyAchievementReward, sConfigMgr->GetOption<std::string>("QuestXpOnly.AchievementReward", ""));
+        LoadStringToMap(sChallengeModes->ironManAchievementReward, sConfigMgr->GetOption<std::string>("IronMan.AchievementReward", ""));
     }
 };
+
+// ============================================================================
+// Base ChallengeMode (shared XP/level logic)
+// ============================================================================
 
 class ChallengeMode : public PlayerScript
 {
 public:
-    explicit ChallengeMode(const char *scriptName,
-                           ChallengeModeSettings settingName)
-            : PlayerScript(scriptName), settingName(settingName)
-    { }
+    explicit ChallengeMode(const char* scriptName, ChallengeModeSettings settingName)
+        : PlayerScript(scriptName), _settingName(settingName)
+    {}
 
     static bool mapContainsKey(const std::unordered_map<uint8, uint32>* mapToCheck, uint8 key)
     {
-        return (mapToCheck->find(key) != mapToCheck->end());
+        return mapToCheck->find(key) != mapToCheck->end();
     }
 
     void OnPlayerGiveXP(Player* player, uint32& amount, Unit* /*victim*/, uint8 /*xpSource*/) override
     {
-        if (!sChallengeModes->challengeEnabledForPlayer(settingName, player))
-        {
+        if (!sChallengeModes->challengeEnabledForPlayer(_settingName, player))
             return;
-        }
-        amount *= sChallengeModes->getXpBonusForChallenge(settingName);
+
+        amount *= sChallengeModes->getXpBonusForChallenge(_settingName);
     }
 
-void OnPlayerLevelChanged(Player* player, uint8 /*oldlevel*/) override
-{
-    if (!sChallengeModes->challengeEnabledForPlayer(settingName, player))
+    void OnPlayerLevelChanged(Player* player, uint8 /*oldlevel*/) override
     {
-        return;
-    }
-
-    const std::unordered_map<uint8, uint32>* titleRewardMap = sChallengeModes->getTitleMapForChallenge(settingName);
-    const std::unordered_map<uint8, uint32>* talentRewardMap = sChallengeModes->getTalentMapForChallenge(settingName);
-    const std::unordered_map<uint8, uint32>* itemRewardMap = sChallengeModes->getItemMapForChallenge(settingName);
-    const std::unordered_map<uint8, uint32>* achievementRewardMap = sChallengeModes->getAchievementMapForChallenge(settingName);
-    uint8 level = player->GetLevel();
-
-    if (mapContainsKey(titleRewardMap, level))
-    {
-        CharTitlesEntry const* titleInfo = sCharTitlesStore.LookupEntry(titleRewardMap->at(level));
-        if (!titleInfo)
-        {
-            LOG_ERROR("mod-challenge-modes", "Invalid title ID {}!", titleRewardMap->at(level));
+        if (!sChallengeModes->challengeEnabledForPlayer(_settingName, player))
             return;
-        }
-        ChatHandler handler(player->GetSession());
-        std::string tNameLink = handler.GetNameLink(player);
-        std::string titleNameStr = Acore::StringFormat(player->getGender() == GENDER_MALE ? titleInfo->nameMale[handler.GetSessionDbcLocale()] : titleInfo->nameFemale[handler.GetSessionDbcLocale()], player->GetName());
-        player->SetTitle(titleInfo);
-    }
 
-    if (mapContainsKey(talentRewardMap, level))
-    {
-        player->RewardExtraBonusTalentPoints(talentRewardMap->at(level));
-    }
+        uint8 level = player->GetLevel();
 
-    if (mapContainsKey(achievementRewardMap, level))
-    {
-        AchievementEntry const* achievementInfo = sAchievementStore.LookupEntry(achievementRewardMap->at(level));
-        if (!achievementInfo)
+        // Title reward
+        if (auto const* titleMap = sChallengeModes->getTitleMapForChallenge(_settingName))
         {
-            LOG_ERROR("mod-challenge-modes", "Invalid Achievement ID {}!", achievementRewardMap->at(level));
-            return;
+            if (mapContainsKey(titleMap, level))
+            {
+                uint32 titleId = titleMap->at(level);
+                if (auto const* titleInfo = sCharTitlesStore.LookupEntry(titleId))
+                {
+                    player->SetTitle(titleInfo);
+                }
+                else
+                {
+                    LOG_ERROR("mod-challenge-modes", "Invalid title ID {} for {}", titleId, _settingName);
+                }
+            }
         }
 
-        ChatHandler handler(player->GetSession());
-        std::string tNameLink = handler.GetNameLink(player);
-        player->CompletedAchievement(achievementInfo);
-    }
+        // Talent reward
+        if (auto const* talentMap = sChallengeModes->getTalentMapForChallenge(_settingName))
+        {
+            if (mapContainsKey(talentMap, level))
+            {
+                player->RewardExtraBonusTalentPoints(talentMap->at(level));
+            }
+        }
 
-    if (mapContainsKey(itemRewardMap, level))
-    {
-        uint32 itemEntry = itemRewardMap->at(level);
-        uint32 itemAmount = sChallengeModes->getItemRewardAmount(settingName); // Fetch item amount from config
-        player->SendItemRetrievalMail({ { itemEntry, itemAmount } });
-    }
+        // Achievement reward
+        if (auto const* achievementMap = sChallengeModes->getAchievementMapForChallenge(_settingName))
+        {
+            if (mapContainsKey(achievementMap, level))
+            {
+                uint32 achievementId = achievementMap->at(level);
+                if (auto const* achievementInfo = sAchievementStore.LookupEntry(achievementId))
+                {
+                    player->CompletedAchievement(achievementInfo);
+                }
+                else
+                {
+                    LOG_ERROR("mod-challenge-modes", "Invalid Achievement ID {} for {}", achievementId, _settingName);
+                }
+            }
+        }
 
-    if (sChallengeModes->getDisableLevel(settingName) && sChallengeModes->getDisableLevel(settingName) <= level)
-    {
-        player->UpdatePlayerSetting("mod-challenge-modes", settingName, 0);
+        // Item reward
+        if (auto const* itemMap = sChallengeModes->getItemMapForChallenge(_settingName))
+        {
+            if (mapContainsKey(itemMap, level))
+            {
+                uint32 itemEntry = itemMap->at(level);
+                uint32 itemAmount = sChallengeModes->getItemRewardAmount(_settingName);
+                player->SendItemRetrievalMail({ { itemEntry, itemAmount } });
+            }
+        }
+
+        // Auto-disable at cap
+        if (sChallengeModes->getDisableLevel(_settingName) && sChallengeModes->getDisableLevel(_settingName) <= level)
+        {
+            player->UpdatePlayerSetting("mod-challenge-modes", _settingName, 0);
+        }
     }
-}
 
 private:
-    ChallengeModeSettings settingName;
+    ChallengeModeSettings _settingName;
 };
+
+// ============================================================================
+// Hardcore mode
+// ============================================================================
 
 class ChallengeMode_Hardcore : public ChallengeMode
 {
@@ -410,63 +482,57 @@ public:
     void OnPlayerLogin(Player* player) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_HARDCORE, player) || !sChallengeModes->challengeEnabledForPlayer(HARDCORE_DEAD, player))
-        {
             return;
-        }
-        player->KillPlayer();
-        player->GetSession()->KickPlayer(std::string("极限模式角色已死亡"));
+
+        // Character is permanently dead — let them see the ghost but prevent play
+        ChatHandler(player->GetSession()).PSendSysMessage("|cffff0000Your Hardcore character has died and cannot be revived.|r");
     }
 
     void OnPlayerReleasedGhost(Player* player) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_HARDCORE, player))
-        {
             return;
+
+        // First death: mark as permanently dead
+        if (!sChallengeModes->challengeEnabledForPlayer(HARDCORE_DEAD, player))
+        {
+            player->UpdatePlayerSetting("mod-challenge-modes", HARDCORE_DEAD, 1);
+            ChatHandler(player->GetSession()).PSendSysMessage("|cffff0000Your Hardcore character has died! You are now a ghost permanently.|r");
         }
-        player->UpdatePlayerSetting("mod-challenge-modes", HARDCORE_DEAD, 1);
-        player->GetSession()->KickPlayer(std::string("极限模式角色已死亡"));
     }
 
     void OnPlayerPVPKill(Player* /*killer*/, Player* killed) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_HARDCORE, killed))
-        {
             return;
-        }
+
         killed->UpdatePlayerSetting("mod-challenge-modes", HARDCORE_DEAD, 1);
     }
 
     void OnPlayerKilledByCreature(Creature* /*killer*/, Player* killed) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_HARDCORE, killed))
-        {
             return;
-        }
+
         killed->UpdatePlayerSetting("mod-challenge-modes", HARDCORE_DEAD, 1);
     }
 
     void OnPlayerResurrect(Player* player, float /*restore_percent*/, bool /*applySickness*/) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_HARDCORE, player))
-        {
             return;
-        }
-        // A better implementation is to not allow the resurrect but this will need a new hook added first
+
+        // Prevent resurrection attempts for dead hardcore characters
+        // Ideally we'd deny the rez outright, but that needs a new core hook
         player->UpdatePlayerSetting("mod-challenge-modes", HARDCORE_DEAD, 1);
         player->KillPlayer();
-        player->GetSession()->KickPlayer(std::string("极限模式角色已死亡"));
-    }
-
-    void OnPlayerGiveXP(Player* player, uint32& amount, Unit* victim, uint8 xpSource) override
-    {
-        ChallengeMode::OnPlayerGiveXP(player, amount, victim, xpSource);
-    }
-
-    void OnPlayerLevelChanged(Player* player, uint8 oldlevel) override
-    {
-        ChallengeMode::OnPlayerLevelChanged(player, oldlevel);
+        player->GetSession()->KickPlayer();
     }
 };
+
+// ============================================================================
+// Semi-Hardcore mode
+// ============================================================================
 
 class ChallengeMode_SemiHardcore : public ChallengeMode
 {
@@ -476,33 +542,30 @@ public:
     void OnPlayerKilledByCreature(Creature* /*killer*/, Player* player) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_SEMI_HARDCORE, player))
-        {
             return;
-        }
+
+        ChatHandler handler(player->GetSession());
         for (uint8 i = 0; i < EQUIPMENT_SLOT_END; ++i)
         {
             if (Item* pItem = player->GetItemByPos(INVENTORY_SLOT_BAG_0, i))
             {
                 if (pItem->GetTemplate() && !pItem->IsEquipped())
                     continue;
+
                 uint8 slot = pItem->GetSlot();
-                ChatHandler(player->GetSession()).PSendSysMessage("|cffDA70D6%s |cffffffff|Hitem:%d:0:0:0:0:0:0:0:0|h[%s]|h|r", "你已失去你的", pItem->GetEntry(), pItem->GetTemplate()->Name1.c_str());
+                handler.PSendSysMessage("|cffDA70D6You lost |cffffffff|Hitem:%d:0:0:0:0:0:0:0:0|h[%s]|h|r",
+                    pItem->GetEntry(), pItem->GetTemplate()->Name1.c_str());
                 player->DestroyItem(INVENTORY_SLOT_BAG_0, slot, true);
             }
         }
         player->SetMoney(0);
-    }
-
-    void OnPlayerGiveXP(Player* player, uint32& amount, Unit* victim, uint8 xpSource) override
-    {
-        ChallengeMode::OnPlayerGiveXP(player, amount, victim, xpSource);
-    }
-
-    void OnPlayerLevelChanged(Player* player, uint8 oldlevel) override
-    {
-        ChallengeMode::OnPlayerLevelChanged(player, oldlevel);
+        handler.PSendSysMessage("|cffDA70D6You lost all your gear and gold!|r");
     }
 };
+
+// ============================================================================
+// Self-Crafted mode
+// ============================================================================
 
 class ChallengeMode_SelfCrafted : public ChallengeMode
 {
@@ -512,26 +575,18 @@ public:
     bool OnPlayerCanEquipItem(Player* player, uint8 /*slot*/, uint16& /*dest*/, Item* pItem, bool /*swap*/, bool /*not_loading*/) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_SELF_CRAFTED, player))
-        {
             return true;
-        }
+
         if (!pItem->GetTemplate()->HasSignature())
-        {
             return false;
-        }
+
         return pItem->GetGuidValue(ITEM_FIELD_CREATOR) == player->GetGUID();
     }
-
-    void OnPlayerGiveXP(Player* player, uint32& amount, Unit* victim, uint8 xpSource) override
-    {
-        ChallengeMode::OnPlayerGiveXP(player, amount, victim, xpSource);
-    }
-
-    void OnPlayerLevelChanged(Player* player, uint8 oldlevel) override
-    {
-        ChallengeMode::OnPlayerLevelChanged(player, oldlevel);
-    }
 };
+
+// ============================================================================
+// Low-Quality Gear mode
+// ============================================================================
 
 class ChallengeMode_ItemQualityLevel : public ChallengeMode
 {
@@ -541,54 +596,35 @@ public:
     bool OnPlayerCanEquipItem(Player* player, uint8 /*slot*/, uint16& /*dest*/, Item* pItem, bool /*swap*/, bool /*not_loading*/) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_ITEM_QUALITY_LEVEL, player))
-        {
             return true;
-        }
+
         return pItem->GetTemplate()->Quality <= ITEM_QUALITY_NORMAL;
     }
-
-    void OnPlayerGiveXP(Player* player, uint32& amount, Unit* victim, uint8 xpSource) override
-    {
-        ChallengeMode::OnPlayerGiveXP(player, amount, victim, xpSource);
-    }
-
-    void OnPlayerLevelChanged(Player* player, uint8 oldlevel) override
-    {
-        ChallengeMode::OnPlayerLevelChanged(player, oldlevel);
-    }
 };
+
+// ============================================================================
+// Slow XP mode
+// ============================================================================
 
 class ChallengeMode_SlowXpGain : public ChallengeMode
 {
 public:
     ChallengeMode_SlowXpGain() : ChallengeMode("ChallengeMode_SlowXpGain", SETTING_SLOW_XP_GAIN) {}
-
-    void OnPlayerGiveXP(Player* player, uint32& amount, Unit* victim, uint8 xpSource) override
-    {
-        ChallengeMode::OnPlayerGiveXP(player, amount, victim, xpSource);
-    }
-
-    void OnPlayerLevelChanged(Player* player, uint8 oldlevel) override
-    {
-        ChallengeMode::OnPlayerLevelChanged(player, oldlevel);
-    }
 };
+
+// ============================================================================
+// Very Slow XP mode
+// ============================================================================
 
 class ChallengeMode_VerySlowXpGain : public ChallengeMode
 {
 public:
     ChallengeMode_VerySlowXpGain() : ChallengeMode("ChallengeMode_VerySlowXpGain", SETTING_VERY_SLOW_XP_GAIN) {}
-
-    void OnPlayerGiveXP(Player* player, uint32& amount, Unit* victim, uint8 xpSource) override
-    {
-        ChallengeMode::OnPlayerGiveXP(player, amount, victim, xpSource);
-    }
-
-    void OnPlayerLevelChanged(Player* player, uint8 oldlevel) override
-    {
-        ChallengeMode::OnPlayerLevelChanged(player, oldlevel);
-    }
 };
+
+// ============================================================================
+// Quest XP Only mode
+// ============================================================================
 
 class ChallengeMode_QuestXpOnly : public ChallengeMode
 {
@@ -598,15 +634,16 @@ public:
     void OnPlayerGiveXP(Player* player, uint32& amount, Unit* victim, uint8 xpSource) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_QUEST_XP_ONLY, player))
-        {
             return;
-        }
+
         if (victim)
         {
-            // Still award XP to pets - they won't be able to pass the player's level
-            Pet* pet = player->GetPet();
-            if (pet && xpSource == XPSOURCE_KILL)
-                pet->GivePetXP(player->GetGroup() ? amount / 2 : amount);
+            // Still award XP to pets — they can't pass the player's level anyway
+            if (Pet* pet = player->GetPet())
+            {
+                if (xpSource == XPSOURCE_KILL)
+                    pet->GivePetXP(player->GetGroup() ? amount / 2 : amount);
+            }
             amount = 0;
         }
         else
@@ -614,12 +651,11 @@ public:
             ChallengeMode::OnPlayerGiveXP(player, amount, victim, xpSource);
         }
     }
-
-    void OnPlayerLevelChanged(Player* player, uint8 oldlevel) override
-    {
-        ChallengeMode::OnPlayerLevelChanged(player, oldlevel);
-    }
 };
+
+// ============================================================================
+// Iron Man mode
+// ============================================================================
 
 class ChallengeMode_IronMan : public ChallengeMode
 {
@@ -629,63 +665,51 @@ public:
     void OnPlayerResurrect(Player* player, float /*restore_percent*/, bool /*applySickness*/) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_IRON_MAN, player))
-        {
             return;
-        }
-        // A better implementation is to not allow the resurrect but this will need a new hook added first
-        player->KillPlayer();
-    }
 
-    void OnPlayerGiveXP(Player* player, uint32& amount, Unit* victim, uint8 xpSource) override
-    {
-        ChallengeMode::OnPlayerGiveXP(player, amount, victim, xpSource);
+        // Iron Man = no resurrection
+        player->KillPlayer();
     }
 
     void OnPlayerLevelChanged(Player* player, uint8 oldlevel) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_IRON_MAN, player))
-        {
             return;
-        }
-        player->SetFreeTalentPoints(0); // Remove all talent points
+
+        player->SetFreeTalentPoints(0);
         ChallengeMode::OnPlayerLevelChanged(player, oldlevel);
     }
 
     void OnPlayerTalentsReset(Player* player, bool /*noCost*/) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_IRON_MAN, player))
-        {
             return;
-        }
-        player->SetFreeTalentPoints(0); // Remove all talent points
+
+        player->SetFreeTalentPoints(0);
     }
 
     bool OnPlayerCanEquipItem(Player* player, uint8 /*slot*/, uint16& /*dest*/, Item* pItem, bool /*swap*/, bool /*not_loading*/) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_IRON_MAN, player))
-        {
             return true;
-        }
+
         return pItem->GetTemplate()->Quality <= ITEM_QUALITY_NORMAL;
     }
 
     bool OnPlayerCanApplyEnchantment(Player* player, Item* /*item*/, EnchantmentSlot /*slot*/, bool /*apply*/, bool /*apply_dur*/, bool /*ignore_condition*/) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_IRON_MAN, player))
-        {
             return true;
-        }
-        // Are there any exceptions in WotLK? If so need to be added here
+
         return false;
     }
 
     void OnPlayerLearnSpell(Player* player, uint32 spellID) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_IRON_MAN, player))
-        {
             return;
-        }
-        // These professions are class skills so they are always acceptable
+
+        // Class skills are always allowed
         switch (spellID)
         {
             case RUNEFORGING:
@@ -695,138 +719,172 @@ public:
             default:
                 break;
         }
-        // Do not allow learning any trade skills
+
+        // Block trade skills
         SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellID);
         if (!spellInfo)
             return;
-        bool shouldForget = false;
+
         for (uint8 i = 0; i < 3; i++)
         {
             if (spellInfo->Effects[i].Effect == SPELL_EFFECT_TRADE_SKILL)
             {
-                shouldForget = true;
+                player->removeSpell(spellID, SPEC_MASK_ALL, false);
+                return;
             }
-        }
-        if (shouldForget)
-        {
-            player->removeSpell(spellID, SPEC_MASK_ALL, false);
         }
     }
 
     bool OnPlayerCanUseItem(Player* player, ItemTemplate const* proto, InventoryResult& /*result*/) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_IRON_MAN, player))
-        {
             return true;
-        }
-        // Do not allow using elixir, potion, or flask
+
+        // Block potions, elixirs, flasks
         if (proto->Class == ITEM_CLASS_CONSUMABLE &&
-                (proto->SubClass == ITEM_SUBCLASS_POTION ||
-                proto->SubClass == ITEM_SUBCLASS_ELIXIR ||
-                proto->SubClass == ITEM_SUBCLASS_FLASK))
+            (proto->SubClass == ITEM_SUBCLASS_POTION ||
+             proto->SubClass == ITEM_SUBCLASS_ELIXIR ||
+             proto->SubClass == ITEM_SUBCLASS_FLASK))
         {
             return false;
         }
-        // Do not allow food that gives food buffs
+
+        // Block food that gives buffs
         if (proto->Class == ITEM_CLASS_CONSUMABLE && proto->SubClass == ITEM_SUBCLASS_FOOD)
         {
-            for (const auto & Spell : proto->Spells)
+            for (uint8 i = 0; i < MAX_ITEM_SPELLS; i++)
             {
-                SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(Spell.SpellId);
+                SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(proto->Spells[i].SpellId);
                 if (!spellInfo)
                     continue;
 
-                for (uint8 i = 0; i < 3; i++)
+                for (uint8 j = 0; j < 3; j++)
                 {
-                    if (spellInfo->Effects[i].ApplyAuraName == SPELL_AURA_PERIODIC_TRIGGER_SPELL)
-                    {
+                    if (spellInfo->Effects[j].ApplyAuraName == SPELL_AURA_PERIODIC_TRIGGER_SPELL)
                         return false;
-                    }
                 }
             }
         }
+
         return true;
     }
 
     bool OnPlayerCanGroupInvite(Player* player, std::string& /*membername*/) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_IRON_MAN, player))
-        {
             return true;
-        }
+
         return false;
     }
 
     bool OnPlayerCanGroupAccept(Player* player, Group* /*group*/) override
     {
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_IRON_MAN, player))
-        {
             return true;
-        }
+
         return false;
     }
-
 };
+
+// ============================================================================
+// Shrine of Challenge game object
+// ============================================================================
 
 class gobject_challenge_modes : public GameObjectScript
 {
-private:
-    static bool playerSettingEnabled(Player* player, uint8 settingIndex)
-    {
-        return player->GetPlayerSetting("mod-challenge-modes", settingIndex).value;
-    }
-
 public:
-    gobject_challenge_modes() : GameObjectScript("gobject_challenge_modes") { }
+    gobject_challenge_modes() : GameObjectScript("gobject_challenge_modes") {}
 
-    struct gobject_challenge_modesAI: GameObjectAI
+    struct gobject_challenge_modesAI : GameObjectAI
     {
-        explicit gobject_challenge_modesAI(GameObject* object) : GameObjectAI(object) { };
+        explicit gobject_challenge_modesAI(GameObject* object) : GameObjectAI(object) {}
 
         bool CanBeSeen(Player const* player) override
         {
             if ((player->GetLevel() > 1 && player->getClass() != CLASS_DEATH_KNIGHT) || (player->GetLevel() > 55))
-            {
                 return false;
-            }
+
             return sChallengeModes->enabled();
         }
     };
 
-    bool OnGossipHello(Player* player, GameObject* go) override
+    GameObjectAI* GetAI(GameObject* object) const override
     {
-        if (sChallengeModes->challengeEnabled(SETTING_HARDCORE) && !playerSettingEnabled(player, SETTING_HARDCORE) && !playerSettingEnabled(player, SETTING_SEMI_HARDCORE))
+        return new gobject_challenge_modesAI(object);
+    }
+
+    bool OnGossipHello(Player* player, GameObject* /*go*/) override
+    {
+        ChatHandler handler(player->GetSession());
+
+        // Show currently active challenges
+        auto const& allModes = ChallengeModes::GetAllModeInfos();
+        bool hasActive = false;
+        for (auto const& mode : allModes)
         {
-            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "启用极限模式", 0, SETTING_HARDCORE);
+            if (player->GetPlayerSetting("mod-challenge-modes", mode.id).value)
+            {
+                if (!hasActive)
+                {
+                    handler.PSendSysMessage("|cff00ff00=== Active Challenge Modes ===|r");
+                    hasActive = true;
+                }
+                handler.PSendSysMessage("|cff00ff00  [ACTIVE] %s|r", mode.name.c_str());
+            }
         }
-        if (sChallengeModes->challengeEnabled(SETTING_SEMI_HARDCORE) && !playerSettingEnabled(player, SETTING_HARDCORE) && !playerSettingEnabled(player, SETTING_SEMI_HARDCORE))
+        if (!hasActive)
         {
-            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "启用半极限模式", 0, SETTING_SEMI_HARDCORE);
+            handler.PSendSysMessage("|cffffcc00No challenge modes active yet. Select one below:|r");
         }
-        if (sChallengeModes->challengeEnabled(SETTING_SELF_CRAFTED) && !playerSettingEnabled(player, SETTING_SELF_CRAFTED) && !playerSettingEnabled(player, SETTING_IRON_MAN))
+
+        // Show available options
+        if (sChallengeModes->challengeEnabled(SETTING_HARDCORE) &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_HARDCORE).value &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_SEMI_HARDCORE).value)
         {
-            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "启用自制装备模式", 0, SETTING_SELF_CRAFTED);
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Hardcore (one life only)", 0, SETTING_HARDCORE);
         }
-        if (sChallengeModes->challengeEnabled(SETTING_ITEM_QUALITY_LEVEL) && !playerSettingEnabled(player, SETTING_ITEM_QUALITY_LEVEL))
+        if (sChallengeModes->challengeEnabled(SETTING_SEMI_HARDCORE) &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_HARDCORE).value &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_SEMI_HARDCORE).value)
         {
-            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "启用低品质装备模式", 0, SETTING_ITEM_QUALITY_LEVEL);
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Semi-Hardcore (lose gear on death)", 0, SETTING_SEMI_HARDCORE);
         }
-        if (sChallengeModes->challengeEnabled(SETTING_SLOW_XP_GAIN) && !playerSettingEnabled(player, SETTING_SLOW_XP_GAIN) && !playerSettingEnabled(player, SETTING_VERY_SLOW_XP_GAIN))
+        if (sChallengeModes->challengeEnabled(SETTING_SELF_CRAFTED) &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_SELF_CRAFTED).value &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_IRON_MAN).value)
         {
-            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "启用慢速经验模式", 0, SETTING_SLOW_XP_GAIN);
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Self-Crafted (crafted gear only)", 0, SETTING_SELF_CRAFTED);
         }
-        if (sChallengeModes->challengeEnabled(SETTING_VERY_SLOW_XP_GAIN) && !playerSettingEnabled(player, SETTING_SLOW_XP_GAIN) && !playerSettingEnabled(player, SETTING_VERY_SLOW_XP_GAIN))
+        if (sChallengeModes->challengeEnabled(SETTING_ITEM_QUALITY_LEVEL) &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_ITEM_QUALITY_LEVEL).value)
         {
-            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "启用极慢经验模式", 0, SETTING_VERY_SLOW_XP_GAIN);
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Low-Quality Gear (white/grey only)", 0, SETTING_ITEM_QUALITY_LEVEL);
         }
-        if (sChallengeModes->challengeEnabled(SETTING_QUEST_XP_ONLY) && !playerSettingEnabled(player, SETTING_QUEST_XP_ONLY))
+        if (sChallengeModes->challengeEnabled(SETTING_SLOW_XP_GAIN) &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_SLOW_XP_GAIN).value &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_VERY_SLOW_XP_GAIN).value)
         {
-            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "启用任务经验专属模式", 0, SETTING_QUEST_XP_ONLY);
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Slow XP (0.5x rate)", 0, SETTING_SLOW_XP_GAIN);
         }
-        if (sChallengeModes->challengeEnabled(SETTING_IRON_MAN) && !playerSettingEnabled(player, SETTING_IRON_MAN) && !playerSettingEnabled(player, SETTING_SELF_CRAFTED))
+        if (sChallengeModes->challengeEnabled(SETTING_VERY_SLOW_XP_GAIN) &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_SLOW_XP_GAIN).value &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_VERY_SLOW_XP_GAIN).value)
         {
-            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "启用铁人模式", 0, SETTING_IRON_MAN);
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Very Slow XP (0.25x rate)", 0, SETTING_VERY_SLOW_XP_GAIN);
         }
+        if (sChallengeModes->challengeEnabled(SETTING_QUEST_XP_ONLY) &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_QUEST_XP_ONLY).value)
+        {
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Quest XP Only (no kill XP)", 0, SETTING_QUEST_XP_ONLY);
+        }
+        if (sChallengeModes->challengeEnabled(SETTING_IRON_MAN) &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_IRON_MAN).value &&
+            !player->GetPlayerSetting("mod-challenge-modes", SETTING_SELF_CRAFTED).value)
+        {
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Iron Man (no grouping/enchants/pots)", 0, SETTING_IRON_MAN);
+        }
+
         SendGossipMenuFor(player, 12669, go->GetGUID());
         return true;
     }
@@ -834,18 +892,20 @@ public:
     bool OnGossipSelect(Player* player, GameObject* /*go*/, uint32 /*sender*/, uint32 action) override
     {
         player->UpdatePlayerSetting("mod-challenge-modes", action, 1);
-        ChatHandler(player->GetSession()).PSendSysMessage("挑战模式已启用。");
+
+        ChatHandler handler(player->GetSession());
+        handler.PSendSysMessage("|cff00ffChallenage mode '%s' has been activated! Good luck!|r",
+            ChallengeModes::GetModeName(static_cast<ChallengeModeSettings>(action)).c_str());
+
         CloseGossipMenuFor(player);
         return true;
     }
-
-    GameObjectAI* GetAI(GameObject* object) const override
-    {
-        return new gobject_challenge_modesAI(object);
-    }
 };
 
-// Add all scripts in one
+// ============================================================================
+// Script registration
+// ============================================================================
+
 void AddSC_mod_challenge_modes()
 {
     new ChallengeModes_WorldScript();
