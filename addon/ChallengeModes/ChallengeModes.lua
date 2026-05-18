@@ -1,6 +1,6 @@
 -- Challenge Modes Addon for WoW 3.3.5a
 -- Tracks active server-side challenge modes and colors bag items
--- Listens for CM_ACTIVE system messages from the server mod
+-- Listens for CM_ACTIVE system messages OR manual /cm set command
 
 -- ============================================================================
 -- Constants
@@ -22,15 +22,24 @@ local MODE_SELF_CRAFTED       = 2
 local MODE_ITEM_QUALITY_LEVEL = 3
 local MODE_IRON_MAN           = 7
 
+-- Quality constants
+local ITEM_QUALITY_POOR   = 0  -- grey
+local ITEM_QUALITY_NORMAL = 1  -- white
+local ITEM_QUALITY_UNCOMMON = 2  -- green
+local ITEM_QUALITY_RARE     = 3  -- blue
+local ITEM_QUALITY_EPIC     = 4  -- purple
+local ITEM_QUALITY_LEGENDARY = 5 -- orange
+
 -- ============================================================================
 -- State
 -- ============================================================================
 
-local activeModes = {}     -- { [modeID] = true/false }
-local toggleOverlay = true -- /cm toggles this
-local bagCache = {}        -- { ["bag-slot"] = "red"|"green"|nil }
+local activeModes = {}              -- { [modeID] = true }
+local modesKnown = false            -- true after CM_ACTIVE received OR manually set
+local toggleOverlay = true
+local bagCacheDirty = true
 
--- Scanning tooltip (hidden, for reading item properties)
+-- Scanning tooltip (hidden, for reading Self-Crafted creator)
 local scanTooltip = CreateFrame("GameTooltip", "ChallengeModesScanTooltip", nil, "GameTooltipTemplate")
 scanTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
 
@@ -49,13 +58,47 @@ function HasAnyModeActive()
     return false
 end
 
-function ParseActiveModes(data)
+function SetActiveModes(modeTable)
     activeModes = {}
-    for id in data:gmatch("(%d+)") do
-        activeModes[tonumber(id)] = true
+    for _, id in ipairs(modeTable) do
+        activeModes[id] = true
     end
+    modesKnown = true
+    bagCacheDirty = true
     UpdateDisplay()
-    ScanAllBagsDelayed()
+    ScanAllBags()
+end
+
+function ParseActiveModes(data)
+    local ids = {}
+    for id in data:gmatch("(%d+)") do
+        ids[tonumber(id)] = true
+    end
+    activeModes = ids
+    modesKnown = true
+    bagCacheDirty = true
+    UpdateDisplay()
+    ScanAllBags()
+end
+
+-- ============================================================================
+-- Item quality
+-- ============================================================================
+
+--- Get item quality from an item ID. Returns 0-5 or nil.
+function GetItemQuality(itemID)
+    if not itemID then return nil end
+    local _, _, quality = GetItemInfo(itemID)
+    return quality
+end
+
+--- Get quality from container slot directly (fallback if GetItemInfo fails)
+function GetSlotQuality(bag, slot)
+    local texture, _, _, quality = GetContainerItemInfo(bag, slot)
+    if quality then return quality end
+    local itemID = GetContainerItemID(bag, slot)
+    if itemID then return GetItemQuality(itemID) end
+    return nil
 end
 
 -- ============================================================================
@@ -68,18 +111,16 @@ function CheckItemRestricted(bag, slot, itemID)
         return false, nil
     end
 
-    -- Get quality (4th return from GetContainerItemInfo)
-    local _, _, _, quality = GetContainerItemInfo(bag, slot)
-    quality = quality or 0
+    local quality = GetSlotQuality(bag, slot)
 
-    -- Quality check: Low-Quality Gear + Iron Man both restrict to white/grey
+    -- Quality check: Low-Quality Gear + Iron Man
     if IsModeActive(MODE_ITEM_QUALITY_LEVEL) or IsModeActive(MODE_IRON_MAN) then
-        if quality > 1 then
+        if quality and quality > ITEM_QUALITY_NORMAL then
             return true, "Only white/grey quality items allowed"
         end
     end
 
-    -- Self-Crafted check: only items you crafted
+    -- Self-Crafted check: only items YOU crafted
     if IsModeActive(MODE_SELF_CRAFTED) then
         if not IsItemSelfCrafted(bag, slot) then
             return true, "Not crafted by you (Self-Crafted active)"
@@ -89,23 +130,25 @@ function CheckItemRestricted(bag, slot, itemID)
     return false, nil
 end
 
---- Scan tooltip to check if item has "Crafted by <player>" text
+--- Scan tooltip for "Crafted by <player>" text
 function IsItemSelfCrafted(bag, slot)
     scanTooltip:ClearLines()
     scanTooltip:SetBagItem(bag, slot)
 
     local playerName = UnitName("player")
+    local tooltipName = scanTooltip:GetName()
+
     for i = 1, scanTooltip:NumLines() do
-        local text = _G["ChallengeModesScanTooltipTextLeft" .. i]
+        local text = _G[tooltipName .. "TextLeft" .. i]
         if text then
             local line = text:GetText() or ""
-            if line:find("Crafted by") or line:find("Made by") or line:find("Created by") then
+            -- Check various localisation patterns
+            if line:find("Crafted by") or line:find("Made by") or line:find("Created by")
+               or line:find("Hergestellt von") or line:find("Erschaffen von") then
                 return line:find(playerName, nil, true) ~= nil
             end
         end
     end
-
-    -- No "Crafted by" line at all = not crafted / world drop
     return false
 end
 
@@ -116,33 +159,46 @@ end
 local scanDebounce = nil
 
 function ScanAllBagsDelayed()
-    if scanDebounce then
-        scanDebounce:Cancel()
-    end
+    if scanDebounce then scanDebounce:Cancel() end
     scanDebounce = C_Timer.After(0.3, ScanAllBags)
 end
 
 function ScanAllBags()
     if not toggleOverlay then return end
+    if not HasAnyModeActive() then
+        -- Still reset colors to show we're in "no data" state
+        ResetAllBagTints()
+        return
+    end
 
     for bag = 0, 4 do
         local slots = GetContainerNumSlots(bag)
         for slot = 1, slots do
             local itemID = GetContainerItemID(bag, slot)
             local button = _G["ContainerFrame" .. (bag + 1) .. "Item" .. slot]
-
             if itemID and button then
-                local restricted, reason = CheckItemRestricted(bag, slot, itemID)
                 local icon = _G[button:GetName() .. "Icon"]
                 if icon then
-                    icon:SetVertexColor(1.0, 1.0, 1.0) -- reset first
-                end
-                if icon and HasAnyModeActive() then
+                    local restricted, reason = CheckItemRestricted(bag, slot, itemID)
                     if restricted then
-                        icon:SetVertexColor(1.0, 0.3, 0.3) -- red = can't equip
+                        icon:SetVertexColor(1.0, 0.25, 0.25) -- red
                     else
-                        icon:SetVertexColor(0.3, 1.0, 0.3) -- green = can equip
+                        icon:SetVertexColor(0.25, 1.0, 0.25) -- green
                     end
+                end
+            end
+        end
+    end
+end
+
+function ResetAllBagTints()
+    for bag = 0, 4 do
+        for slot = 1, GetContainerNumSlots(bag) do
+            local button = _G["ContainerFrame" .. (bag + 1) .. "Item" .. slot]
+            if button then
+                local icon = _G[button:GetName() .. "Icon"]
+                if icon then
+                    icon:SetVertexColor(1.0, 1.0, 1.0)
                 end
             end
         end
@@ -201,29 +257,24 @@ function UpdateDisplay()
         return
     end
 
-    -- Clear old children
-    for _, child in pairs({ displayFrame.content or {} }) do
-        child:Hide()
-        child:SetParent(nil)
-    end
-
-    -- Rebuild content
-    local content
-    if displayFrame.content then
-        content = displayFrame.content
-        for _, child in pairs({ content:GetChildren() }) do
-            child:Hide()
-            child:SetParent(nil)
-        end
-    else
+    -- Find or create content frame
+    local content = displayFrame.content
+    if not content then
         content = CreateFrame("Frame", nil, displayFrame)
         content:SetPoint("TOPLEFT", displayFrame, "TOPLEFT", 8, -20)
         content:SetPoint("BOTTOMRIGHT", displayFrame, "BOTTOMRIGHT", -8, 8)
         displayFrame.content = content
     end
 
+    -- Destroy old children
+    for _, child in pairs({ content:GetChildren() }) do
+        child:Hide()
+        child:SetParent(nil)
+    end
+
+    -- Build lines
     local y = -4
-    for i, name in ipairs(lines) do
+    for _, name in ipairs(lines) do
         local fs = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         fs:SetText("  |cff00ff00\u{25CF}|r " .. name)
         fs:SetPoint("TOPLEFT", content, "TOPLEFT", 0, y)
@@ -273,36 +324,61 @@ SLASH_CHALLENGEMODES2 = "/challengemodes"
 
 SlashCmdList["CHALLENGEMODES"] = function(msg)
     msg = strtrim(msg or "")
-    if msg == "" then
+    local cmd, args = msg:match("^(%S*)%s*(.-)$")
+    cmd = strlower(cmd or "")
+    args = strtrim(args or "")
+
+    if cmd == "" then
         toggleOverlay = not toggleOverlay
         if toggleOverlay then
             ScanAllBags()
             UpdateDisplay()
             print("|cff3399ffChallenge Modes|r overlay |cff33ff33ON|r")
         else
-            -- Reset all bag icon tints
-            for bag = 0, 4 do
-                for slot = 1, GetContainerNumSlots(bag) do
-                    local button = _G["ContainerFrame" .. (bag + 1) .. "Item" .. slot]
-                    if button then
-                        local icon = _G[button:GetName() .. "Icon"]
-                        if icon then
-                            icon:SetVertexColor(1.0, 1.0, 1.0)
-                        end
-                    end
-                end
-            end
-            if displayFrame then
-                displayFrame:Hide()
-            end
+            ResetAllBagTints()
+            if displayFrame then displayFrame:Hide() end
             print("|cff3399ffChallenge Modes|r overlay |cffff6666OFF|r")
         end
-    elseif msg == "reset" or msg == "rescan" then
+
+    elseif cmd == "set" then
+        local ids = {}
+        for num in args:gmatch("(%d+)") do
+            tinsert(ids, tonumber(num))
+        end
+        if #ids == 0 then
+            print("|cffff6666Usage:|r /cm set <modeID> [modeID ...]")
+            print("  Mode IDs: 0=Hardcore 1=Semi-Hardcore 2=Self-Crafted 3=Low-Quality")
+            print("            4=SlowXP 5=VerySlowXP 6=QuestXPOnly 7=IronMan 8=HCDead")
+            return
+        end
+        SetActiveModes(ids)
+        print("|cff3399ffChallenge Modes|r set manually:")
+        for _, id in ipairs(ids) do
+            if CHALLENGE_MODES[id] then
+                print("  |cff00ff00\u{25CF}|r " .. CHALLENGE_MODES[id].name)
+            end
+        end
+        -- Force a bag rescan immediately
+        ScanAllBags()
+
+    elseif cmd == "reset" or cmd == "rescan" then
+        bagCacheDirty = true
         ScanAllBags()
         UpdateDisplay()
         print("|cff3399ffChallenge Modes|r rescanned.")
-    elseif msg == "status" then
-        if not HasAnyModeActive() then
+
+    elseif cmd == "clear" then
+        activeModes = {}
+        modesKnown = false
+        ResetAllBagTints()
+        if displayFrame then displayFrame:Hide() end
+        print("|cff3399ffChallenge Modes|r cleared.")
+
+    elseif cmd == "status" then
+        if not modesKnown then
+            print("|cff3399ffChallenge Modes:|r No mode data received yet.")
+            print("  Use |cffffffff/cm set <ids>|r to set manually, or update the server mod.")
+        elseif not HasAnyModeActive() then
             print("|cff3399ffChallenge Modes:|r No active challenges on this character.")
         else
             print("|cff3399ffChallenge Modes:|r Active:")
@@ -312,6 +388,14 @@ SlashCmdList["CHALLENGEMODES"] = function(msg)
                 end
             end
         end
+
+    else
+        print("|cffff6666Unknown command:|r " .. cmd)
+        print("  /cm                    - toggle overlay")
+        print("  /cm set <id> [id ...] - manually set active modes")
+        print("  /cm status             - show current state")
+        print("  /cm clear             - clear all modes")
+        print("  /cm reset             - force bag rescan")
     end
 end
 
@@ -322,6 +406,7 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")
 eventFrame:RegisterEvent("BAG_UPDATE")
+eventFrame:RegisterEvent("BANKFRAME_OPENED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
@@ -330,13 +415,26 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         if msg and msg:sub(1, 9) == "CM_ACTIVE" then
             ParseActiveModes(msg:sub(11))
         end
-    elseif event == "BAG_UPDATE" then
-        if toggleOverlay and HasAnyModeActive() then
+    elseif event == "BAG_UPDATE" or event == "BANKFRAME_OPENED" then
+        if toggleOverlay then
             ScanAllBagsDelayed()
         end
     elseif event == "PLAYER_ENTERING_WORLD" then
         activeModes = {}
+        modesKnown = false
         if displayFrame then displayFrame:Hide() end
+        ResetAllBagTints()
+    end
+end)
+
+-- ============================================================================
+-- Auto-rescan when item tooltips are shown (catches newly looted items)
+-- ============================================================================
+local hookFrame = CreateFrame("Frame")
+hookFrame:RegisterEvent("ITEM_PUSH")
+hookFrame:SetScript("OnEvent", function()
+    if toggleOverlay and HasAnyModeActive() then
+        ScanAllBagsDelayed()
     end
 end)
 
@@ -345,7 +443,8 @@ end)
 -- ============================================================================
 
 local function OnAddonLoaded()
-    print("|cff3399ffChallenge Modes|r addon loaded. Type |cffffffff/cm|r to toggle bag overlay.")
+    print("|cff3399ffChallenge Modes|r addon loaded. Type |cffffffff/cm|r for help.")
+    print("  No server mod update yet? Use |cffffffff/cm set 0 2|r to test Hardcore + Self-Crafted.")
 end
 
 local loadedFrame = CreateFrame("Frame")
