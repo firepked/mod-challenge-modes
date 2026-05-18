@@ -1,0 +1,9 @@
+## Interface: 30300
+## Title: Challenge Modes
+## Notes: Shows active challenge modes and highlights restricted items in bags
+## Author: firepked
+## Version: 1.0.0
+## DefaultState: enabled
+## LoadOnDemand: 0
+
+ChallengeModes.xml

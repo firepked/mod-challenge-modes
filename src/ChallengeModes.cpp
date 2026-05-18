@@ -787,6 +787,45 @@ public:
 };
 
 // ============================================================================
+// Player Login — sends active mode data for addon
+// ============================================================================
+
+class ChallengeModes_PlayerLogin : public PlayerScript
+{
+public:
+    ChallengeModes_PlayerLogin() : PlayerScript("ChallengeModes_PlayerLogin") {}
+
+    void OnPlayerLogin(Player* player) override
+    {
+        // Build a comma-separated list of active mode IDs and send as addon message
+        std::string activeModes;
+        auto const& allModes = ChallengeModes::GetAllModeInfos();
+        for (auto const& mode : allModes)
+        {
+            if (player->GetPlayerSetting("mod-challenge-modes", mode.id).value)
+            {
+                if (!activeModes.empty())
+                    activeModes.push_back(',');
+                activeModes += std::to_string(mode.id);
+            }
+        }
+
+        // Also send hardcore death flag if set
+        if (player->GetPlayerSetting("mod-challenge-modes", HARDCORE_DEAD).value)
+        {
+            if (!activeModes.empty())
+                activeModes.push_back(',');
+            activeModes += std::to_string(HARDCORE_DEAD);
+        }
+
+        if (!activeModes.empty())
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage("CM_ACTIVE %s", activeModes.c_str());
+        }
+    }
+};
+
+// ============================================================================
 // Shrine of Challenge game object
 // ============================================================================
 
@@ -909,6 +948,7 @@ public:
 void AddSC_mod_challenge_modes()
 {
     new ChallengeModes_WorldScript();
+    new ChallengeModes_PlayerLogin();
     new gobject_challenge_modes();
     new ChallengeMode_Hardcore();
     new ChallengeMode_SemiHardcore();
