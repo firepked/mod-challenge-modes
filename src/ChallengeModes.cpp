@@ -577,6 +577,10 @@ public:
         if (!sChallengeModes->challengeEnabledForPlayer(SETTING_SELF_CRAFTED, player))
             return true;
 
+        // Allow bags and containers regardless of creator
+        if (pItem->GetTemplate()->Class == ITEM_CLASS_CONTAINER)
+            return true;
+
         if (!pItem->GetTemplate()->HasSignature())
             return false;
 
